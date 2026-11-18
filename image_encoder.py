@@ -26,8 +26,10 @@ class MultiHeadAttention:
         # TODO-02 contract: [B,N,D] to [B,H,N,D/H].
         # Image model: D=768, H=12, D/H=64.
         # x.shape=(B,50,768)
+        # 先拆分成 [B, N, 12, 64]
         B,N,D=x.shape
         x=x.reshape(B,N,self.heads,self.head_dim)
+        # 转置为 [B, 12, N, 64]
         x=x.transpose(0,2,1,3)
         return x
         #raise NotImplementedError('TODO-02: split the feature axis into heads')
@@ -42,6 +44,8 @@ class MultiHeadAttention:
         # TODO-03a: query/key comparisons, scaled by sqrt(head_dim).
         # q,k,v: [B,H,N,64]. scores must have [B,H,N,N].
         # raise NotImplementedError('TODO-03a: calculate scores from q and k')
+        #k.transpose(0, 1, 3, 2)会变成[B, H, 64, N]
+        #矩阵相乘后，scores 形状为 [B, H, N, N]
         scores=(q @ k.transpose(0,1,3,2)) / np.float32(np.sqrt(self.head_dim))
         # Given for later text-encoder compatibility. Images use causal=False.
         if causal:
@@ -50,12 +54,15 @@ class MultiHeadAttention:
 
         # TODO-03b: mix value rows using coefficients; then join head outputs.
         # context: [B,H,N,64], merged: [B,N,D].
+        # coefficients 形状是 [B, H, N, N]，v 形状是 [B, H, N, 64]
         context = coefficients @ v
+        # 合并多头，先转置回 [B, N, H, 64]
         merged = context.transpose(0,2,1,3).reshape(x.shape[0],x.shape[1],self.width)
         #raise NotImplementedError('TODO-03b: weighted values and merged heads')
 
         # TODO-03c: output projection, using out_weight and out_bias.
         # Return [B,N,D]. Remember the stored linear-weight orientation.
+        # 输出投影 (有偏置，且权重是 [out,in])
         out = merged @ self.out_weight.T + self.out_bias
         return out
         # raise NotImplementedError('TODO-03c: project merged attention outputs')
@@ -78,6 +85,7 @@ class TransformerBlock:
 
         # TODO-04a: first residual addition. Name the result residual.
         # raise NotImplementedError('TODO-04a: add the attention update to x')
+        # [B, N, D]
         residual = x + update
         # Given: the second Norm and the exact checkpoint activation helper.
         u = self.norm2(residual)
@@ -86,8 +94,11 @@ class TransformerBlock:
         # hidden: [B,N,3072], mlp_update: [B,N,768] for the image tower.
         # Return residual + mlp_update. Both residual paths retain [B,N,D].
         # raise NotImplementedError('TODO-04b: MLP and the second residual')
+        # 第一层全连接 + GELU (隐藏层扩到 3072 维)
         hidden = self.gelu(u @ self.fc1_weight.T + self.fc1_bias)
+        # 第二层全连接 (降回 768 维)
         mlp_update = hidden @ self.fc2_weight.T + self.fc2_bias
+        # 残差相加
         return residual + mlp_update
 
 
@@ -111,9 +122,12 @@ class ImageEncoder:
         """
         # TODO-01: separate patch-grid axes; reorder; flatten.
         # Input [B,3,224,224], return [B,49,3072].
+        #拆分H、W为（7，32）
         B=images.shape[0]
+        #调整维度顺序，把两个 7 (patch的H, W) 放到中间，把 3, 32, 32 放到最后
         x=images.reshape(B,3,7,32,7,32)
         x=x.transpose(0,2,4,1,3,5)
+        #合并为[B,49,3072]
         x=x.reshape(B,49,3072)
         return x
         #raise NotImplementedError('TODO-01: turn each image into 49 patch rows')
@@ -129,7 +143,9 @@ class ImageEncoder:
 
         # TODO-05b: prepend CLS on the token axis, then add learned positions.
         # Return [B,50,768]. self.position broadcasts over B.
+        #拼接CLS token 和 patch 特征
         x = np.concatenate([cls,patch_tokens],axis=1)
+        # 加上位置编码
         x = x + self.position
         return x
         #raise NotImplementedError('TODO-05b: CLS, patch rows and positions')
